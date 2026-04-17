@@ -1,0 +1,6 @@
+pymupdf
+rank_bm25
+llama-cpp-python
+fastapi
+uvicorn
+pydantic
