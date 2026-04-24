@@ -1,0 +1,298 @@
+PROJECT SUMMARY — Offline Textbook Chatbot
+==========================================
+OBJECTIVES:
+- Should run locally
+- Should be lightweight enough to run on low to mid level PC
+- Should give appropriate responses 
+- Should be able to give explanations 
+- <=5 seconds response time
+
+An offline-capable RAG (Retrieval-Augmented Generation) system that lets students
+upload a textbook PDF and ask questions about it. The LLM never answers from its
+own memory — it is always grounded in retrieved textbook content. Everything runs
+locally with no internet required after initial setup.
+
+Built as two branches for a comparative study:
+  baseline  — qwen2.5:1.5b (untrained) + BM25 keyword retrieval
+  finetuned — tb-tutor (LoRA-finetuned qwen2.5:1.5b) + semantic embedding retrieval
+
+
+OVERALL APPLICATION FLOW
+========================
+
+  INGEST FLOW (one-time per document)
+  ------------------------------------
+  User selects PDF
+       │
+       ▼
+  React Frontend
+       │  POST /upload (multipart)
+       ▼
+  FastAPI (api/main.py)
+       │
+       ├─► preprocessing.py ──► extract text page by page (PyMuPDF)
+       │                    └──► clean: strip noise, remove end-of-chapter sections
+       │
+       ├─► chunking.py ──► detect section headings
+       │               └──► split into chunks with (id, chapter, section, content)
+       │
+       ├─► Merge with existing textbook.json (accumulated across uploads)
+       │
+       ├─► index.py ──► encode all chunks with all-MiniLM-L6-v2
+       │            └──► save {embeddings, chunks} → bm25_index.pkl
+       │
+       └─► reset in-memory index cache
+       │
+       ▼
+  Frontend shows: "X chunks indexed from [chapter]"
+
+
+  QUERY FLOW (every message)
+  --------------------------
+  User types question
+       │
+       ▼
+  React Frontend
+       │  POST /chat/stream
+       ▼
+  FastAPI (api/main.py)
+       │
+       ├─► search.py ──► encode query with all-MiniLM-L6-v2
+       │            ├──► cosine similarity against all chunk embeddings
+       │            └──► top score < 0.35 threshold?
+       │                    YES → return [] (no LLM call)
+       │                    NO  → return top-2 chunks
+       │
+       ├─► No chunks? ──► stream "No relevant content found." → Frontend
+       │
+       ├─► Build context: join 2 chunks × 100 words each
+       │
+       ├─► inference.py ──► build prompt (context + question + grounding instruction)
+       │               └──► ollama.generate(stream=True) → token stream
+       │
+       └─► StreamingResponse ──► tokens forwarded to frontend as they arrive
+       │
+       ▼
+  Frontend renders answer word by word
+
+
+ARCHITECTURE
+============
+Decoupled web architecture: a React frontend communicates with a FastAPI backend
+over HTTP. The frontend and backend are developed and run independently. This is
+the standard pattern for production web apps — the frontend is stateless and just
+sends queries; all intelligence lives in the backend.
+
+
+FULL WORKFLOW (step by step)
+=============================
+1. User uploads a PDF via the React frontend.
+2. FastAPI /upload receives the file and writes it to a temp path.
+3. preprocessing.py extracts text page-by-page using PyMuPDF (fitz), then cleans
+   it — removes page numbers, figure captions, credit lines, end-of-chapter
+   sections (Key Terms, Self-Check Questions, etc.), and openstax footers.
+4. chunking.py splits cleaned text into section-aware chunks. A heading detector
+   identifies section titles (numbered headings like "1.2 Supply" or title-cased
+   short lines) and starts a new chunk at each one. Chunks must have >= 50 words.
+   Each chunk stores: id, chapter name (from filename), section name, content.
+5. New chunks are merged with existing textbook.json (IDs assigned sequentially
+   so multiple uploads accumulate without collision).
+6. index.py encodes all chunk content with the all-MiniLM-L6-v2 sentence
+   transformer and saves the embeddings + chunks together in bm25_index.pkl.
+7. search.py cache is reset so the next query loads the fresh index.
+8. User asks a question. FastAPI /chat/stream receives it.
+9. search.py encodes the query with the same embedding model, computes cosine
+   similarity against all chunks, checks the top score against a threshold (0.35).
+   If below threshold, returns empty — the LLM is never called and the user sees
+   "No relevant content found."
+10. The top-2 chunks (up to 100 words each) are joined into a context string.
+11. inference.py builds the prompt (context + question + instruction) and calls
+    Ollama with the finetuned model, streaming tokens back to the frontend as
+    they are generated.
+
+
+COMPONENTS
+==========
+utils/preprocessing.py
+  Extracts raw text from PDF pages using PyMuPDF. Applies regex cleaning to strip
+  noise: page numbers, figure captions, all-caps section headers, openstax
+  footers, review questions, and end-of-chapter material. Returns one cleaned
+  string per page.
+
+utils/chunking.py
+  Splits cleaned text into chunks bounded by section headings. Uses a heading
+  detector (numbered headings or title-case short lines). Attaches chapter and
+  section metadata to every chunk. Chunks under 50 words are discarded or merged
+  into the previous chunk.
+
+retriever/index.py
+  Loads textbook.json, encodes every chunk's content with all-MiniLM-L6-v2
+  (from local models/ directory), and saves {embeddings, chunks} to
+  bm25_index.pkl. Run once after any upload.
+
+retriever/search.py
+  Loads the index on first call (cached in memory). Encodes the query, computes
+  cosine similarity against all chunk embeddings, returns the top-k chunks.
+  Hard threshold at 0.35 — queries with no good match return an empty list and
+  the LLM is never called.
+
+llm/inference.py
+  Wraps ollama.generate(). Builds a prompt from retrieved context and the user
+  question. explain_stream() yields tokens as they arrive, which FastAPI forwards
+  as a streaming HTTP response. Model and generation options (temperature, stop
+  tokens, max tokens) configured here.
+
+api/main.py
+  FastAPI app with two routes:
+    POST /upload — receives PDF, runs the full ingest pipeline, rebuilds index.
+    POST /chat/stream — retrieves context, streams LLM response back.
+  Includes timing prints (retrieval time, time-to-first-token) for performance
+  monitoring. History field accepted but currently passed through for future use.
+
+finetuning/training_data.jsonl
+  1,002 question-answer pairs used to finetune the model. Each answer demonstrates
+  the target teaching behaviour: bullet structure, no repetition, real-world
+  examples, explains the why, completes within token budget. Covers a broad range
+  of subjects and question types deliberately so the model learns a style, not
+  domain facts.
+
+finetuning/filter_educhat.py
+  Script used to filter and prepare the raw dataset before training.
+
+download_model.py
+  One-time script to download all-MiniLM-L6-v2 from HuggingFace and save it
+  locally to models/. After running this, the system is fully offline.
+
+models/Modelfile
+  Ollama Modelfile used to create the tb-tutor model from the exported GGUF.
+
+
+FINETUNED MODEL — tb-tutor
+===========================
+Base:              qwen2.5:1.5b (unsloth/Qwen2.5-1.5B)
+Framework:         Unsloth LoRA (2x faster finetuning)
+Dataset:           1,002 examples, 3 epochs, 189 steps
+Training time:     ~9 minutes (543.6s) on 1 GPU
+LoRA parameters:   18,464,768 trainable / 1,562,179,072 total (1.18%)
+Final loss:        1.001  (starting loss: 1.846)
+Export:            GGUF Q4_K_M (~986MB), served via Ollama as "tb-tutor"
+
+How finetuning works: LoRA freezes the original model weights and trains small
+adapter matrices inserted into the attention layers. At the end, adapters are
+merged back (W_final = W_original + delta_W), producing a model the same size as
+the base. The model does not gain new knowledge — it learns a new response style
+from the demonstration data.
+
+
+IMPROVEMENTS MADE (over initial prototype)
+==========================================
+1. BM25 keyword retrieval → semantic embedding retrieval
+   BM25 matched on exact word overlap. all-MiniLM-L6-v2 encodes meaning, so
+   "explain supply and demand" finds chunks about price elasticity even if the
+   words don't overlap exactly.
+
+2. Offline embedding model
+   SentenceTransformer downloads from HuggingFace on first use. Saved locally to
+   models/all-MiniLM-L6-v2 so the system runs with no internet after setup.
+   Folder excluded from git (~90MB).
+
+3. Similarity threshold gate (SIMILARITY_THRESHOLD = 0.35)
+   If the best-matching chunk scores below 0.35 cosine similarity, the LLM is
+   never called. Prevents hallucination on off-topic questions and reduces latency
+   for clearly unrelated queries.
+
+4. Prompt grounding instruction
+   System prompt explicitly instructs the model to say "That topic isn't covered
+   in the loaded material" if the context doesn't support answering. Two-layer
+   grounding: the threshold gate blocks most off-topic queries, the prompt handles
+   borderline cases.
+
+5. Streaming response
+   Replaced blocking /chat (waits for full response) with /chat/stream which
+   yields tokens as they are generated via Server-Sent Events. Users see output
+   within ~1 second instead of waiting 5-10 seconds.
+
+6. top_k=2, dual-chunk context
+   Retrieves 2 chunks (100 words each) instead of 1 chunk (200 words). Covers
+   more of the relevant section without inflating the prompt size, which would
+   increase latency.
+
+7. Temperature 0.3 (down from 0.4)
+   Lower temperature keeps answers more focused and reduces rambling on
+   straightforward factual questions.
+
+8. Removed 3-4 bullet constraint from prompt (finetuned branch)
+   The original prompt forced exactly 3-4 bullets. Replaced with "as many as the
+   concept requires" so complex topics get full coverage. The finetuned model
+   still defaults to 3-4 bullets due to training data distribution, but the
+   ceiling is gone.
+
+9. Section-aware chunking
+   Original chunking was word-count based, cutting mid-paragraph. Replaced with
+   heading detection so each chunk maps to one textbook section. Chunk metadata
+   (chapter, section) is preserved and could be shown in the UI.
+
+10. Model finetuning (LoRA via Unsloth)
+    The base model (qwen2.5:1.5b) answers correctly but behaves poorly as a tutor:
+    ignores format instructions, repeats definitions, generates poor examples, cuts
+    off mid-sentence. Finetuning on 1,002 curated teaching examples shifts the
+    model's output style without changing its knowledge.
+
+
+DIRECTORY LAYOUT
+================
+offline_chatbot/
+  api/
+    main.py              FastAPI app, /upload and /chat/stream routes
+  comparative study/
+    baseline_analysis.md    Pre-training evaluation results
+    training_approach.md    Dataset design decisions
+    training_run.txt        Unsloth training output and loss curve
+    images-pretraining/     Screenshots of baseline responses
+    images-posttraining/    Screenshots of finetuned responses
+  data/
+    textbook.json           All chunks (persists across uploads)
+    bm25_index.pkl          Serialised embeddings + chunks (rebuilt on upload)
+    *.pdf                   Uploaded textbook chapters
+  finetuning/
+    training_data.jsonl     1,002 Q&A training pairs
+    filter_educhat.py       Dataset filter/prep script
+  llm/
+    inference.py            Ollama wrapper, prompt builder, streaming
+  models/
+    all-MiniLM-L6-v2/      Local embedding model (not in git)
+    Modelfile               Ollama Modelfile for tb-tutor
+  retriever/
+    index.py                Builds and saves embedding index
+    search.py               Cosine similarity search with threshold gate
+  utils/
+    preprocessing.py        PDF extraction and cleaning
+    chunking.py             Section-aware text chunking
+  download_model.py         One-time script to save embedding model locally
+
+
+HOW TO RUN
+==========
+Prerequisites: Python 3.11+, Ollama installed and running
+
+1. Install dependencies:
+     pip install -r requirements.txt
+     pip install sentence-transformers
+
+2. Download embedding model (once, requires internet):
+     python download_model.py
+
+3. Pull or create the LLM:
+     Baseline:   ollama pull qwen2.5:1.5b
+     Finetuned:  ollama create tb-tutor -f models/Modelfile
+
+4. Start the backend:
+     python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+5. Start the frontend (separate terminal):
+     cd frontend && npm install && npm start
+
+6. Open http://localhost:3000, upload a PDF, and start asking questions.
+
+Note: Use `python -m uvicorn` rather than `uvicorn` directly to ensure the
+currently active virtual environment's binary is used.

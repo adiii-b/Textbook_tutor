@@ -1,13 +1,15 @@
 """
 FastAPI entry point.
 POST /chat — routes query to show or explain mode.
-POST /upload — accepts a PDF, processes it, rebuilds the BM25 index.
+POST /upload — accepts a PDF, processes it, rebuilds the embedding index.
 """
 
 import json
 import shutil
 import tempfile
+import time
 from pathlib import Path
+from typing import List, Dict
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +26,7 @@ app = FastAPI(title="Offline Textbook Chatbot")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -32,6 +34,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     query: str
+    history: List[Dict[str, str]] = []
 
 
 class ChatResponse(BaseModel):
@@ -81,7 +84,7 @@ async def upload(file: UploadFile = File(...)):
 def chat(request: ChatRequest):
     query = request.query.strip()
     mode = route_query(query)
-    chunks = retrieve(query, top_k=1)
+    chunks = retrieve(query, top_k=3)
 
     if not chunks:
         return ChatResponse(mode=mode, answer="No relevant content found in the textbook.")
@@ -90,22 +93,36 @@ def chat(request: ChatRequest):
         answer = chunks[0]["content"]
     else:
         context = ' '.join(chunks[0]['content'].split()[:200])
-        answer = explain(context, query)
+        answer = explain(context, query, request.history)
 
     return ChatResponse(mode=mode, answer=answer)
+
 
 @app.post("/chat/stream")
 def chat_stream(request: ChatRequest):
     query = request.query.strip()
-    chunks = retrieve(query, top_k=1)
+
+    t0 = time.time()
+    chunks = retrieve(query, top_k=2)
+    print(f"Retrieval: {time.time() - t0:.3f}s", flush=True)
 
     if not chunks:
         def empty():
             yield "No relevant content found in the textbook."
         return StreamingResponse(empty(), media_type="text/plain")
 
-    context = ' '.join(chunks[0]['content'].split()[:200])
-    return StreamingResponse(explain_stream(context, query), media_type="text/plain")
+    context = ' '.join(' '.join(c['content'].split()[:100]) for c in chunks)
+
+    t1 = time.time()
+    def timed_stream():
+        first_token = True
+        for token in explain_stream(context, query):
+            if first_token:
+                print(f"Time to first token: {time.time() - t1:.3f}s", flush=True)
+                first_token = False
+            yield token
+
+    return StreamingResponse(timed_stream(), media_type="text/plain")
 
 
 if __name__ == "__main__":

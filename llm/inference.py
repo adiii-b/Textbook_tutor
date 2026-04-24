@@ -12,23 +12,23 @@ Question:
 {question}
 
 Task:
-Explain this simply in 3-4 bullet points."""
+Answer clearly in bullet points, using as many as the concept requires. For each point explain the why, and include real-world examples where they help understanding. Answer only using the context provided — if the topic is not covered in the context, say "That topic isn't covered in the loaded material.\""""
+
 
 def build_prompt(context: str, question: str) -> str:
     return PROMPT_TEMPLATE.format(context=context, question=question)
 
 
-def explain(context, question):
+def explain(context, question, history=None):
     prompt = build_prompt(context, question)
     try:
         response = ollama.generate(
-            model="qwen2.5:1.5b",
+            model="tb-tutor",
             prompt=prompt,
             options={
-                "temperature": 0.4,
+                "temperature": 0.3,
                 "top_p": 0.9,
-                "num_predict": 80,
-                "stop": ["Question:", "Context:"]
+                "num_predict": 350,
             }
         )
         return response["response"].strip()
@@ -36,21 +36,15 @@ def explain(context, question):
         raise ConnectionError("Ollama is not running. Start it with 'ollama serve'.") from e
 
 
-def explain_stream(context: str, question: str):
-    prompt = build_prompt(context, question)
+def explain_stream(context: str, question: str, history=None):
     try:
-        stream = ollama.generate(
-            model="qwen2.5:1.5b",
-            prompt=prompt,
+        stream = ollama.chat(
+            model="tb-tutor",
+            messages=[{"role": "user", "content": question}],
             stream=True,
-            options={
-                "temperature": 0.4,
-                "top_p": 0.9,
-                "num_predict": 80,
-                "stop": ["Question:", "Context:"]
-            }
+            options={"temperature": 0.3, "top_p": 0.9, "num_predict": 512}
         )
         for chunk in stream:
-            yield chunk["response"]
+            yield chunk["message"]["content"]
     except Exception as e:
         raise ConnectionError("Ollama is not running. Start it with 'ollama serve'.") from e

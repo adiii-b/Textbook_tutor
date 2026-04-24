@@ -1,13 +1,17 @@
 """
-Loads the BM25 index and retrieves the top-k chunks for a query.
+Loads the embedding index and retrieves the top-k chunks for a query.
 """
 
 import pickle
+import numpy as np
 from pathlib import Path
+from sentence_transformers import SentenceTransformer
 
 INDEX_PATH = Path(__file__).parent.parent / "data" / "bm25_index.pkl"
+MODEL_PATH = Path(__file__).parent.parent / "models" / "all-MiniLM-L6-v2"
 
 _index_cache = None
+_model = None
 
 
 def reset_index():
@@ -15,29 +19,44 @@ def reset_index():
     _index_cache = None
 
 
+def _load_model():
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(str(MODEL_PATH))
+    return _model
+
+
 def _load_index():
     global _index_cache
     if _index_cache is None:
         if not INDEX_PATH.exists():
             raise FileNotFoundError(
-                "BM25 index not found. Run retriever/index.py first."
+                "Index not found. Run retriever/index.py first."
             )
         with open(INDEX_PATH, "rb") as f:
             _index_cache = pickle.load(f)
     return _index_cache
 
 
-def tokenize(text: str) -> list[str]:
-    return text.lower().split()
+SIMILARITY_THRESHOLD = 0.35
 
 
-def retrieve(query: str, top_k: int = 2) -> list[dict]:
+def retrieve(query: str, top_k: int = 1) -> list[dict]:
     data = _load_index()
-    bm25 = data["bm25"]
+    model = _load_model()
+
+    chunk_embeddings = data["embeddings"]
     chunks = data["chunks"]
 
-    scores = bm25.get_scores(tokenize(query))
-    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+    query_embedding = model.encode(query, convert_to_numpy=True)
+
+    norms = np.linalg.norm(chunk_embeddings, axis=1) * np.linalg.norm(query_embedding)
+    scores = np.dot(chunk_embeddings, query_embedding) / norms
+
+    top_indices = np.argsort(scores)[::-1][:top_k]
+
+    if scores[top_indices[0]] < SIMILARITY_THRESHOLD:
+        return []
 
     return [chunks[i] for i in top_indices]
 
