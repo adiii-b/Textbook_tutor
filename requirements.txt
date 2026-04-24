@@ -1,6 +1,8 @@
-pymupdf
-rank_bm25
-llama-cpp-python
 fastapi
 uvicorn
 pydantic
+python-multipart
+ollama
+sentence-transformers
+numpy
+pymupdf
