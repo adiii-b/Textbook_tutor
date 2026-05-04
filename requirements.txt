@@ -2,7 +2,8 @@ fastapi
 uvicorn
 pydantic
 python-multipart
-ollama
+llama-cpp-python
 sentence-transformers
 numpy
-pymupdf
+rank-bm25
+pdfplumber

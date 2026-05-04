@@ -1,50 +1,55 @@
-"""
-Runs inference using the loaded model.
-Keeps context small and output short for low-resource performance.
-"""
-import ollama
+from llama_cpp import Llama
+
+MODEL_PATH = "models/lfm-tutor-q4.gguf"
+N_THREADS  = 4
+N_CTX      = 512
+
+_llm = None
 
 
-PROMPT_TEMPLATE = """Context:
-{context}
-
-Question:
-{question}
-
-Task:
-Answer clearly in bullet points, using as many as the concept requires. For each point explain the why, and include real-world examples where they help understanding. Answer only using the context provided — if the topic is not covered in the context, say "That topic isn't covered in the loaded material.\""""
+def _get_model() -> Llama:
+    global _llm
+    if _llm is None:
+        _llm = Llama(model_path=MODEL_PATH, n_ctx=N_CTX, n_threads=N_THREADS, chat_format=None, verbose=False)
+    return _llm
 
 
-def build_prompt(context: str, question: str) -> str:
-    return PROMPT_TEMPLATE.format(context=context, question=question)
-
-
-def explain(context, question, history=None):
-    prompt = build_prompt(context, question)
-    try:
-        response = ollama.generate(
-            model="tb-tutor",
-            prompt=prompt,
-            options={
-                "temperature": 0.3,
-                "top_p": 0.9,
-                "num_predict": 350,
-            }
+def _build_messages(context: str, question: str) -> list:
+    if context.strip():
+        user_content = (
+            f"Context:\n{context}\n\n"
+            f"Question:\n{question}\n\n"
+            "Answer clearly in bullet points. For each point explain the why, "
+            "and include real-world examples where they help. "
+            "Answer only using the context provided — if the topic is not covered "
+            "in the context, say \"That topic isn't covered in the loaded material.\""
         )
-        return response["response"].strip()
-    except Exception as e:
-        raise ConnectionError("Ollama is not running. Start it with 'ollama serve'.") from e
+    else:
+        user_content = question
+    return [{"role": "user", "content": user_content}]
+
+
+def explain(context: str, question: str, history=None) -> str:
+    llm = _get_model()
+    result = llm.create_chat_completion(
+        messages=_build_messages(context, question),
+        max_tokens=350,
+        temperature=0.3,
+        top_p=0.9,
+    )
+    return result["choices"][0]["message"]["content"].strip()
 
 
 def explain_stream(context: str, question: str, history=None):
-    try:
-        stream = ollama.chat(
-            model="tb-tutor",
-            messages=[{"role": "user", "content": question}],
-            stream=True,
-            options={"temperature": 0.3, "top_p": 0.9, "num_predict": 512}
-        )
-        for chunk in stream:
-            yield chunk["message"]["content"]
-    except Exception as e:
-        raise ConnectionError("Ollama is not running. Start it with 'ollama serve'.") from e
+    llm = _get_model()
+    stream = llm.create_chat_completion(
+        messages=_build_messages(context, question),
+        max_tokens=512,
+        temperature=0.3,
+        top_p=0.9,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk["choices"][0]["delta"]
+        if "content" in delta:
+            yield delta["content"]
