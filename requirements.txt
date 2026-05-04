@@ -8,4 +8,4 @@ tokenizers
 huggingface_hub
 numpy
 rank-bm25
-pdfplumber
+pypdf
