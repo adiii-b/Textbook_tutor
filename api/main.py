@@ -13,7 +13,8 @@ from typing import List, Dict
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from retriever.search import retrieve, reset_index
@@ -23,6 +24,10 @@ from utils.chunking import build_chunks, save_chunks
 from retriever.index import build_index
 
 app = FastAPI(title="Offline Textbook Chatbot")
+
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "static")), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -123,6 +128,14 @@ def chat_stream(request: ChatRequest):
             yield token
 
     return StreamingResponse(timed_stream(), media_type="text/plain")
+
+
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    file_path = FRONTEND_DIR / full_path
+    if file_path.is_file():
+        return FileResponse(file_path)
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 if __name__ == "__main__":
