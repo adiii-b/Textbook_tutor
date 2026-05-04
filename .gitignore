@@ -1,5 +1,6 @@
 models/*.gguf
 models/*/model.safetensors
 models/flant5-finetuned-fp16/
+models/minilm-onnx/
 __pycache__/
 *.pyc

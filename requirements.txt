@@ -3,7 +3,9 @@ uvicorn
 pydantic
 python-multipart
 llama-cpp-python
-sentence-transformers
+onnxruntime
+tokenizers
+huggingface_hub
 numpy
 rank-bm25
 pdfplumber
