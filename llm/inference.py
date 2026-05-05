@@ -1,25 +1,20 @@
-import subprocess
-from pathlib import Path
+import json
+import httpx
 
-MODEL_PATH = Path(__file__).parent.parent / "models" / "lfm-tutor-q4.gguf"
-LLAMA_CLI  = Path(__file__).parent.parent / "llama.cpp" / "build" / "bin" / "llama-cli"
-N_THREADS  = 4
-N_CTX      = 512
+LLAMA_SERVER = "http://127.0.0.1:8080"
 
 
-def _build_prompt(context: str, question: str) -> str:
+def _build_messages(context: str, question: str) -> list:
     if context.strip():
         user_content = (
             f"Context:\n{context}\n\n"
             f"Question:\n{question}\n\n"
-            "Answer clearly in bullet points. For each point explain the why, "
-            "and include real-world examples where they help. "
-            "Answer only using the context provided — if the topic is not covered "
-            "in the context, say \"That topic isn't covered in the loaded material.\""
+            "Answer in 3 bullet points using only the context. "
+            "If not covered, say so."
         )
     else:
         user_content = question
-    return f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+    return [{"role": "user", "content": user_content}]
 
 
 def explain(context: str, question: str, history=None) -> str:
@@ -27,24 +22,25 @@ def explain(context: str, question: str, history=None) -> str:
 
 
 def explain_stream(context: str, question: str, history=None):
-    prompt = _build_prompt(context, question)
-    cmd = [
-        str(LLAMA_CLI),
-        "-m", str(MODEL_PATH),
-        "-t", str(N_THREADS),
-        "-c", str(N_CTX),
-        "-n", "512",
-        "--temp", "0.3",
-        "--top-p", "0.9",
-        "--no-display-prompt",
-        "-p", prompt,
-    ]
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        bufsize=0,
-    )
-    for chunk in iter(lambda: process.stdout.read(1), b""):
-        yield chunk.decode("utf-8", errors="replace")
-    process.wait()
+    payload = {
+        "messages": _build_messages(context, question),
+        "max_tokens": 512,
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "stream": True,
+    }
+    with httpx.Client(timeout=None) as client:
+        with client.stream("POST", f"{LLAMA_SERVER}/chat/completions", json=payload) as response:
+            for line in response.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0]["delta"]
+                    if "content" in delta and delta["content"]:
+                        yield delta["content"]
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue

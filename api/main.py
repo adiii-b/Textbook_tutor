@@ -116,7 +116,7 @@ def chat_stream(request: ChatRequest):
             yield "No relevant content found in the textbook."
         return StreamingResponse(empty(), media_type="text/plain")
 
-    context = ' '.join(' '.join(c['content'].split()[:100]) for c in chunks)
+    context = ' '.join(' '.join(c['content'].split()[:75]) for c in chunks)
 
     t1 = time.time()
     def timed_stream():
