@@ -9,8 +9,10 @@ def _build_messages(context: str, question: str) -> list:
         user_content = (
             f"Context:\n{context}\n\n"
             f"Question:\n{question}\n\n"
-            "Answer in 3 bullet points using only the context. "
-            "If not covered, say so."
+            "Answer clearly in bullet points. For each point explain the why, "
+            "and include real-world examples where they help. "
+            "Answer only using the context provided — if the topic is not covered "
+            "in the context, say \"That topic isn't covered in the loaded material.\""
         )
     else:
         user_content = question
