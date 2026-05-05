@@ -1,20 +1,13 @@
-from llama_cpp import Llama
+import subprocess
+from pathlib import Path
 
-MODEL_PATH = "models/lfm-tutor-q4.gguf"
+MODEL_PATH = Path(__file__).parent.parent / "models" / "lfm-tutor-q4.gguf"
+LLAMA_CLI  = Path(__file__).parent.parent / "llama.cpp" / "build" / "bin" / "llama-cli"
 N_THREADS  = 4
 N_CTX      = 512
 
-_llm = None
 
-
-def _get_model() -> Llama:
-    global _llm
-    if _llm is None:
-        _llm = Llama(model_path=MODEL_PATH, n_ctx=N_CTX, n_threads=N_THREADS, chat_format=None, verbose=False)
-    return _llm
-
-
-def _build_messages(context: str, question: str) -> list:
+def _build_prompt(context: str, question: str) -> str:
     if context.strip():
         user_content = (
             f"Context:\n{context}\n\n"
@@ -26,30 +19,32 @@ def _build_messages(context: str, question: str) -> list:
         )
     else:
         user_content = question
-    return [{"role": "user", "content": user_content}]
+    return f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
 
 
 def explain(context: str, question: str, history=None) -> str:
-    llm = _get_model()
-    result = llm.create_chat_completion(
-        messages=_build_messages(context, question),
-        max_tokens=350,
-        temperature=0.3,
-        top_p=0.9,
-    )
-    return result["choices"][0]["message"]["content"].strip()
+    return "".join(explain_stream(context, question, history))
 
 
 def explain_stream(context: str, question: str, history=None):
-    llm = _get_model()
-    stream = llm.create_chat_completion(
-        messages=_build_messages(context, question),
-        max_tokens=512,
-        temperature=0.3,
-        top_p=0.9,
-        stream=True,
+    prompt = _build_prompt(context, question)
+    cmd = [
+        str(LLAMA_CLI),
+        "-m", str(MODEL_PATH),
+        "-t", str(N_THREADS),
+        "-c", str(N_CTX),
+        "-n", "512",
+        "--temp", "0.3",
+        "--top-p", "0.9",
+        "--no-display-prompt",
+        "-p", prompt,
+    ]
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=0,
     )
-    for chunk in stream:
-        delta = chunk["choices"][0]["delta"]
-        if "content" in delta:
-            yield delta["content"]
+    for chunk in iter(lambda: process.stdout.read(1), b""):
+        yield chunk.decode("utf-8", errors="replace")
+    process.wait()
