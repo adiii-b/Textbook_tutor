@@ -1,0 +1,16 @@
+{
+  "files": {
+    "main.css": "/static/css/main.40ca8af1.css",
+    "main.js": "/static/js/main.f4883052.js",
+    "static/js/453.96235719.chunk.js": "/static/js/453.96235719.chunk.js",
+    "static/media/Chalktastic-r78L.ttf": "/static/media/Chalktastic-r78L.d2b5ec52a9df1ec22322.ttf",
+    "index.html": "/index.html",
+    "main.40ca8af1.css.map": "/static/css/main.40ca8af1.css.map",
+    "main.f4883052.js.map": "/static/js/main.f4883052.js.map",
+    "453.96235719.chunk.js.map": "/static/js/453.96235719.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.40ca8af1.css",
+    "static/js/main.f4883052.js"
+  ]
+}
