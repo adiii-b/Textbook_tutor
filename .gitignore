@@ -3,3 +3,5 @@ models/*/model.safetensors
 models/flant5-finetuned-fp16/
 __pycache__/
 *.pyc
+finetuning/training_data.jsonl
+finetuning/training_data_clean.jsonl
