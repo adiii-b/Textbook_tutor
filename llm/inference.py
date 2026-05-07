@@ -23,7 +23,7 @@ def explain(context, question, history=None):
     prompt = build_prompt(context, question)
     try:
         response = ollama.generate(
-            model="tb-tutor",
+            model="smollm2-tutor",
             prompt=prompt,
             options={
                 "temperature": 0.3,
@@ -39,8 +39,8 @@ def explain(context, question, history=None):
 def explain_stream(context: str, question: str, history=None):
     try:
         stream = ollama.chat(
-            model="tb-tutor",
-            messages=[{"role": "user", "content": question}],
+            model="smollm2-tutor",
+            messages=[{"role": "user", "content": build_prompt(context, question)}],
             stream=True,
             options={"temperature": 0.3, "top_p": 0.9, "num_predict": 512}
         )
