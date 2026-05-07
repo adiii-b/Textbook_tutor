@@ -23,7 +23,7 @@ def explain(context, question, history=None):
     prompt = build_prompt(context, question)
     try:
         response = ollama.generate(
-            model="smollm2-tutor",
+            model="tb-tutor",
             prompt=prompt,
             options={
                 "temperature": 0.3,
@@ -39,12 +39,12 @@ def explain(context, question, history=None):
 def explain_stream(context: str, question: str, history=None):
     try:
         stream = ollama.chat(
-            model="smollm2-tutor",
-            messages=[{"role": "user", "content": build_prompt(context, question)}],
+            model="tb-tutor",
+            messages=[{"role": "user", "content": question}],
             stream=True,
             options={"temperature": 0.3, "top_p": 0.9, "num_predict": 512}
         )
         for chunk in stream:
-            yield chunk["message"]["content"]
+            yield chunk.message.content
     except Exception as e:
         raise ConnectionError("Ollama is not running. Start it with 'ollama serve'.") from e
