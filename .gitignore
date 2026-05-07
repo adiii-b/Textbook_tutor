@@ -7,3 +7,4 @@ finetuning/training_data.jsonl
 finetuning/training_data_clean.jsonl
 finetuning/generation_prompt.txt
 comparative study/
+*.lnk
