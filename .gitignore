@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 finetuning/training_data.jsonl
 finetuning/training_data_clean.jsonl
+comparative study/
